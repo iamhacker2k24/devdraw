@@ -247,10 +247,10 @@ const TopBar = ({
 
         {/* Center Island: Collaborative Room Pill */}
         <div className="pointer-events-auto relative" ref={roomModalRef}>
-          <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-900/85 px-3 py-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.6)] backdrop-blur-xl ring-1 ring-white/5 text-xs">
+          <div className="flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-900/85 px-3 py-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.6)] backdrop-blur-xl ring-1 ring-white/5 text-xs whitespace-nowrap">
             {/* Status light */}
             <span
-              className={`flex h-2 w-2 rounded-full ${
+              className={`flex h-2 w-2 shrink-0 rounded-full ${
                 isConnected ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" : "bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]"
               }`}
             />
@@ -258,10 +258,10 @@ const TopBar = ({
             {/* Room ID */}
             <button
               onClick={() => setIsRoomModalOpen((prev) => !prev)}
-              className="flex items-center gap-1.5 font-mono text-neutral-200 hover:text-white transition px-1"
+              className="flex items-center gap-1.5 font-mono text-neutral-200 hover:text-white transition px-1 whitespace-nowrap"
               title="Room settings"
             >
-              <span>{roomId || "Solo"}</span>
+              <span className="whitespace-nowrap">{roomId || "Solo"}</span>
               <FiChevronDown size={13} className={`text-neutral-400 transition-transform ${isRoomModalOpen ? "rotate-180" : ""}`} />
             </button>
 

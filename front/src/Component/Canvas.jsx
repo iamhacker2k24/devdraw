@@ -941,25 +941,33 @@ export default function Canvas() {
       ctx.fillStyle = bgColorRef.current;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Dynamic subtle grid (dots or lines)
+      ctx.setTransform(dpr * scale, 0, 0, dpr * scale, x * dpr, y * dpr);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+
+      // World-anchored subtle grid (dots or lines)
       if (gridModeRef.current !== "none") {
         const isDark = bgColorRef.current !== "#f8fafc" && bgColorRef.current !== "#ffffff";
-        const gridColor = isDark ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.07)";
-        const baseSpacing = 28;
-        let spacing = baseSpacing * scale * dpr;
+        const gridColor = isDark ? "rgba(255, 255, 255, 0.15)" : "rgba(0, 0, 0, 0.12)";
+        
+        let step = 32;
+        while (step * scale < 18) step *= 2;
+        while (step * scale > 72) step /= 2;
 
-        while (spacing < 14) spacing *= 2;
-        while (spacing > 56) spacing /= 2;
+        const minWorldX = -x / scale;
+        const maxWorldX = (-x + canvas.width / dpr) / scale;
+        const minWorldY = -y / scale;
+        const maxWorldY = (-y + canvas.height / dpr) / scale;
 
-        const offX = (x * dpr) % spacing;
-        const offY = (y * dpr) % spacing;
+        const startX = Math.floor(minWorldX / step) * step;
+        const startY = Math.floor(minWorldY / step) * step;
 
         ctx.save();
         if (gridModeRef.current === "dots") {
           ctx.fillStyle = gridColor;
-          const r = Math.max(1, 1.15 * dpr);
-          for (let gx = offX; gx < canvas.width; gx += spacing) {
-            for (let gy = offY; gy < canvas.height; gy += spacing) {
+          const r = Math.max(0.8 / scale, 1.2 / scale);
+          for (let gx = startX; gx <= maxWorldX; gx += step) {
+            for (let gy = startY; gy <= maxWorldY; gy += step) {
               ctx.beginPath();
               ctx.arc(gx, gy, r, 0, Math.PI * 2);
               ctx.fill();
@@ -967,24 +975,20 @@ export default function Canvas() {
           }
         } else if (gridModeRef.current === "grid") {
           ctx.strokeStyle = gridColor;
-          ctx.lineWidth = 1 * dpr;
+          ctx.lineWidth = 1 / scale;
           ctx.beginPath();
-          for (let gx = offX; gx < canvas.width; gx += spacing) {
-            ctx.moveTo(gx, 0);
-            ctx.lineTo(gx, canvas.height);
+          for (let gx = startX; gx <= maxWorldX; gx += step) {
+            ctx.moveTo(gx, minWorldY);
+            ctx.lineTo(gx, maxWorldY);
           }
-          for (let gy = offY; gy < canvas.height; gy += spacing) {
-            ctx.moveTo(0, gy);
-            ctx.lineTo(canvas.width, gy);
+          for (let gy = startY; gy <= maxWorldY; gy += step) {
+            ctx.moveTo(minWorldX, gy);
+            ctx.lineTo(maxWorldX, gy);
           }
           ctx.stroke();
         }
         ctx.restore();
       }
-
-      ctx.setTransform(dpr * scale, 0, 0, dpr * scale, x * dpr, y * dpr);
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
 
       const helpers = { getImage };
       const all = currentStroke.current
@@ -1739,6 +1743,6 @@ export default function Canvas() {
           }}
         />
       )}
-    </>
+    </div>
   );
 }
