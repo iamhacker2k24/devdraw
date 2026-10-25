@@ -1,19 +1,14 @@
+import React from "react";
+import Canvas from "./Component/Canvas";
+import { ToastProvider } from "./Component/Toast";
 
-import React, { useState } from "react";
-import Header from "./Component/Header";
-import Canvas from "./Component/Canvas"
 const App = () => {
-  const [data, setData] = useState({});
-
-  const sentValu = (value) => {
-    console.log(value);
-    setData(value);
-  };
   return (
-    <>
-      {/* <Header sentValu={sentValu} /> */}
-      <Canvas/>
-    </>
+    <ToastProvider>
+      <div className="relative w-screen h-screen overflow-hidden bg-neutral-950 font-sans antialiased text-neutral-100 select-none">
+        <Canvas />
+      </div>
+    </ToastProvider>
   );
 };
 

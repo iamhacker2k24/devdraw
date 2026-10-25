@@ -1,7 +1,11 @@
 import { useRef, useEffect, useState } from "react";
 import { io } from "socket.io-client";
 import Header from "./Header";
-import RoomBar from "./RoomBar";
+import TopBar from "./TopBar";
+import ZoomControls from "./ZoomControls";
+import ShortcutsModal from "./ShortcutsModal";
+import { useToast } from "./Toast";
+import { FiCopy, FiTrash2 } from "react-icons/fi";
 
 function drawRemoteCursor(ctx, c, scale) {
   if (!c || c.x == null || c.y == null) return;
@@ -439,9 +443,15 @@ export default function Canvas() {
     }
   }
 
-  const [bgColor, setBgcolor] = useState("Black");
-  const [linecolor, setLinecolor] = useState("green");
-  const [lineWidth, setLinewidth] = useState(6);
+  const { showToast } = useToast();
+  const [boardTitle, setBoardTitle] = useState("Untitled Drawing");
+  const [gridMode, setGridMode] = useState("dots");
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
+  const [viewScale, setViewScale] = useState(1);
+
+  const [bgColor, setBgcolor] = useState("#121214");
+  const [linecolor, setLinecolor] = useState("#3b82f6");
+  const [lineWidth, setLinewidth] = useState(4);
   const [tool, setTool] = useState("pencil");
   const [isPanning, setIsPanning] = useState(false);
 
@@ -451,6 +461,12 @@ export default function Canvas() {
   const lineColorRef = useRef(linecolor);
   const linewidthRef = useRef(lineWidth);
   const toolRef = useRef(tool);
+  const gridModeRef = useRef(gridMode);
+
+  useEffect(() => {
+    gridModeRef.current = gridMode;
+    dirty.current = true;
+  }, [gridMode]);
 
   function snapshotHistory() {
     const snap = JSON.stringify(strokes.current);
@@ -481,6 +497,7 @@ export default function Canvas() {
     dirty.current = true;
     persistStrokes();
     syncStrokesToSocket();
+    showToast("Undo", "info", 1200);
   }
 
   function redo() {
@@ -491,7 +508,264 @@ export default function Canvas() {
     dirty.current = true;
     persistStrokes();
     syncStrokesToSocket();
+    showToast("Redo", "info", 1200);
   }
+
+  const handleZoomIn = () => {
+    const canvas = canvasRef.current;
+    const cx = canvas ? canvas.clientWidth / 2 : window.innerWidth / 2;
+    const cy = canvas ? canvas.clientHeight / 2 : window.innerHeight / 2;
+    const factor = 1.25;
+    const newScale = Math.min(view.current.scale * factor, 20);
+    const worldX = (cx - view.current.x) / view.current.scale;
+    const worldY = (cy - view.current.y) / view.current.scale;
+    view.current.scale = newScale;
+    view.current.x = cx - worldX * newScale;
+    view.current.y = cy - worldY * newScale;
+    setViewScale(newScale);
+    dirty.current = true;
+    saveView();
+  };
+
+  const handleZoomOut = () => {
+    const canvas = canvasRef.current;
+    const cx = canvas ? canvas.clientWidth / 2 : window.innerWidth / 2;
+    const cy = canvas ? canvas.clientHeight / 2 : window.innerHeight / 2;
+    const factor = 0.8;
+    const newScale = Math.max(view.current.scale * factor, 0.1);
+    const worldX = (cx - view.current.x) / view.current.scale;
+    const worldY = (cy - view.current.y) / view.current.scale;
+    view.current.scale = newScale;
+    view.current.x = cx - worldX * newScale;
+    view.current.y = cy - worldY * newScale;
+    setViewScale(newScale);
+    dirty.current = true;
+    saveView();
+  };
+
+  const handleResetZoom = () => {
+    const canvas = canvasRef.current;
+    const cx = canvas ? canvas.clientWidth / 2 : window.innerWidth / 2;
+    const cy = canvas ? canvas.clientHeight / 2 : window.innerHeight / 2;
+    const worldX = (cx - view.current.x) / view.current.scale;
+    const worldY = (cy - view.current.y) / view.current.scale;
+    view.current.scale = 1;
+    view.current.x = cx - worldX;
+    view.current.y = cy - worldY;
+    setViewScale(1);
+    dirty.current = true;
+    saveView();
+    showToast("Zoom reset to 100%", "info", 1200);
+  };
+
+  const handleFitCenter = () => {
+    if (strokes.current.length === 0) {
+      view.current = { x: 0, y: 0, scale: 1 };
+      setViewScale(1);
+      dirty.current = true;
+      saveView();
+      return;
+    }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const s of strokes.current) {
+      const b = boundsOf(s);
+      if (b.minX < minX) minX = b.minX;
+      if (b.minY < minY) minY = b.minY;
+      if (b.maxX > maxX) maxX = b.maxX;
+      if (b.maxY > maxY) maxY = b.maxY;
+    }
+    const canvas = canvasRef.current;
+    const cw = canvas ? canvas.clientWidth : window.innerWidth;
+    const ch = canvas ? canvas.clientHeight : window.innerHeight;
+    const bw = Math.max(maxX - minX, 100);
+    const bh = Math.max(maxY - minY, 100);
+    const padding = 100;
+    const scale = Math.min((cw - padding * 2) / bw, (ch - padding * 2) / bh, 1.5);
+    const finalScale = Math.max(0.15, scale);
+    const midX = (minX + maxX) / 2;
+    const midY = (minY + maxY) / 2;
+    view.current.scale = finalScale;
+    view.current.x = cw / 2 - midX * finalScale;
+    view.current.y = ch / 2 - midY * finalScale;
+    setViewScale(finalScale);
+    dirty.current = true;
+    saveView();
+  };
+
+  const handleExportPNG = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    if (strokes.current.length === 0) {
+      showToast("Canvas is empty", "info");
+      return;
+    }
+    const link = document.createElement("a");
+    const name = boardTitle.trim().replace(/\s+/g, "_") || "devdraw";
+    link.download = `${name}-${Date.now()}.png`;
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+    showToast("Exported PNG successfully!", "success");
+  };
+
+  const handleExportSVG = () => {
+    if (strokes.current.length === 0) {
+      showToast("Canvas is empty", "info");
+      return;
+    }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const s of strokes.current) {
+      const b = boundsOf(s);
+      if (b.minX < minX) minX = b.minX;
+      if (b.minY < minY) minY = b.minY;
+      if (b.maxX > maxX) maxX = b.maxX;
+      if (b.maxY > maxY) maxY = b.maxY;
+    }
+    const pad = 50;
+    const w = Math.max(maxX - minX + pad * 2, 120);
+    const h = Math.max(maxY - minY + pad * 2, 120);
+    const originX = minX - pad;
+    const originY = minY - pad;
+
+    let elementsSvg = "";
+    for (const s of strokes.current) {
+      const type = s.type || "pencil";
+      const color = s.color || "#ffffff";
+      const width = s.width || 4;
+
+      if (type === "pencil" && s.points.length > 1) {
+        let d = `M ${s.points[0].x} ${s.points[0].y}`;
+        for (let i = 1; i < s.points.length; i++) {
+          d += ` L ${s.points[i].x} ${s.points[i].y}`;
+        }
+        elementsSvg += `<path d="${d}" stroke="${color}" stroke-width="${width}" fill="none" stroke-linecap="round" stroke-linejoin="round" />\n`;
+      } else if (type === "rectangle" && s.points.length >= 2) {
+        const [a, b] = s.points;
+        const rx = Math.min(a.x, b.x);
+        const ry = Math.min(a.y, b.y);
+        const rw = Math.abs(b.x - a.x);
+        const rh = Math.abs(b.y - a.y);
+        elementsSvg += `<rect x="${rx}" y="${ry}" width="${rw}" height="${rh}" stroke="${color}" stroke-width="${width}" fill="none" />\n`;
+      } else if (type === "circle" && s.points.length >= 2) {
+        const [a, b] = s.points;
+        const cx = (a.x + b.x) / 2;
+        const cy = (a.y + b.y) / 2;
+        const rx = Math.abs(b.x - a.x) / 2;
+        const ry = Math.abs(b.y - a.y) / 2;
+        elementsSvg += `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" stroke="${color}" stroke-width="${width}" fill="none" />\n`;
+      } else if ((type === "line" || type === "arrow") && s.points.length >= 2) {
+        const [a, b] = s.points;
+        elementsSvg += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${color}" stroke-width="${width}" stroke-linecap="round" />\n`;
+      } else if (type === "text" && s.points.length >= 2) {
+        const [a, b] = s.points;
+        const x = Math.min(a.x, b.x);
+        const y = Math.min(a.y, b.y);
+        const escaped = (s.text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        elementsSvg += `<text x="${x}" y="${y + 20}" fill="${color}" font-size="${TEXT_FONT_SIZE}" font-family="sans-serif">${escaped}</text>\n`;
+      }
+    }
+
+    const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${originX} ${originY} ${w} ${h}" width="${w}" height="${h}">
+  <rect x="${originX}" y="${originY}" width="${w}" height="${h}" fill="${bgColorRef.current}" />
+  ${elementsSvg}
+</svg>`;
+
+    const blob = new Blob([svgContent], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const name = boardTitle.trim().replace(/\s+/g, "_") || "devdraw";
+    a.download = `${name}.svg`;
+    a.href = url;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast("Exported SVG successfully!", "success");
+  };
+
+  const handleExportJSON = () => {
+    const data = {
+      version: 1,
+      title: boardTitle,
+      strokes: strokes.current,
+      view: view.current,
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const name = boardTitle.trim().replace(/\s+/g, "_") || "devdraw";
+    a.download = `${name}.json`;
+    a.href = url;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast("Board saved as JSON file!", "success");
+  };
+
+  const handleImportJSON = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target.result);
+        if (Array.isArray(data.strokes)) {
+          strokes.current = data.strokes;
+          if (data.title) setBoardTitle(data.title);
+          if (data.view) {
+            view.current = data.view;
+            if (data.view.scale) setViewScale(data.view.scale);
+          }
+          snapshotHistory();
+          persistStrokes();
+          syncStrokesToSocket();
+          dirty.current = true;
+          showToast("Board imported successfully!", "success");
+        }
+      } catch {
+        showToast("Invalid JSON board file", "error");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const handleClearCanvas = () => {
+    if (strokes.current.length === 0) return;
+    strokes.current = [];
+    selectedIndex.current = -1;
+    snapshotHistory();
+    persistStrokes();
+    syncStrokesToSocket();
+    dirty.current = true;
+    showToast("Canvas cleared", "info");
+  };
+
+  const duplicateSelected = () => {
+    if (selectedIndex.current >= 0 && strokes.current[selectedIndex.current]) {
+      const item = JSON.parse(JSON.stringify(strokes.current[selectedIndex.current]));
+      if (item.points) {
+        item.points.forEach((p) => {
+          p.x += 20;
+          p.y += 20;
+        });
+      }
+      strokes.current.push(item);
+      selectedIndex.current = strokes.current.length - 1;
+      snapshotHistory();
+      persistStrokes();
+      emitAddedStroke(item);
+      dirty.current = true;
+      showToast("Element duplicated", "success", 1200);
+    }
+  };
+
+  const deleteSelected = () => {
+    if (selectedIndex.current >= 0) {
+      strokes.current.splice(selectedIndex.current, 1);
+      selectedIndex.current = -1;
+      saveStrokes();
+      snapshotHistory();
+      markDirty();
+      showToast("Element deleted", "info", 1200);
+    }
+  };
 
   useEffect(() => {
     bgColorRef.current = bgColor;
@@ -666,6 +940,47 @@ export default function Canvas() {
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.fillStyle = bgColorRef.current;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Dynamic subtle grid (dots or lines)
+      if (gridModeRef.current !== "none") {
+        const isDark = bgColorRef.current !== "#f8fafc" && bgColorRef.current !== "#ffffff";
+        const gridColor = isDark ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.07)";
+        const baseSpacing = 28;
+        let spacing = baseSpacing * scale * dpr;
+
+        while (spacing < 14) spacing *= 2;
+        while (spacing > 56) spacing /= 2;
+
+        const offX = (x * dpr) % spacing;
+        const offY = (y * dpr) % spacing;
+
+        ctx.save();
+        if (gridModeRef.current === "dots") {
+          ctx.fillStyle = gridColor;
+          const r = Math.max(1, 1.15 * dpr);
+          for (let gx = offX; gx < canvas.width; gx += spacing) {
+            for (let gy = offY; gy < canvas.height; gy += spacing) {
+              ctx.beginPath();
+              ctx.arc(gx, gy, r, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        } else if (gridModeRef.current === "grid") {
+          ctx.strokeStyle = gridColor;
+          ctx.lineWidth = 1 * dpr;
+          ctx.beginPath();
+          for (let gx = offX; gx < canvas.width; gx += spacing) {
+            ctx.moveTo(gx, 0);
+            ctx.lineTo(gx, canvas.height);
+          }
+          for (let gy = offY; gy < canvas.height; gy += spacing) {
+            ctx.moveTo(0, gy);
+            ctx.lineTo(canvas.width, gy);
+          }
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
 
       ctx.setTransform(dpr * scale, 0, 0, dpr * scale, x * dpr, y * dpr);
       ctx.lineCap = "round";
@@ -1212,6 +1527,7 @@ export default function Canvas() {
         view.current.scale = newScale;
         view.current.x = sx - worldX * newScale;
         view.current.y = sy - worldY * newScale;
+        setViewScale(newScale);
       } else {
         view.current.x -= e.deltaX;
         view.current.y -= e.deltaY;
@@ -1221,7 +1537,8 @@ export default function Canvas() {
     }
 
     function keyDown(e) {
-      if (pendingTextRef.current) return; // typing in the text box, don't nuke anything
+      if (pendingTextRef.current) return;
+      if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
 
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
@@ -1234,17 +1551,42 @@ export default function Canvas() {
         redo();
         return;
       }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        duplicateSelected();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === "0") {
+        e.preventDefault();
+        handleResetZoom();
+        return;
+      }
 
       if (
         (e.key === "Delete" || e.key === "Backspace") &&
         toolRef.current === "cursor" &&
         selectedIndex.current >= 0
       ) {
-        strokes.current.splice(selectedIndex.current, 1);
-        selectedIndex.current = -1;
-        saveStrokes();
-        snapshotHistory();
-        markDirty();
+        deleteSelected();
+        return;
+      }
+
+      // Keyboard hotkeys for tools (when no modifier key is pressed)
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        const k = e.key.toLowerCase();
+        if (k === "v") { setTool("cursor"); showToast("Select Tool (V)", "info", 900); }
+        else if (k === "h") { setTool("hand"); showToast("Hand Pan Tool (H)", "info", 900); }
+        else if (k === "p") { setTool("pencil"); showToast("Pencil Tool (P)", "info", 900); }
+        else if (k === "r") { setTool("rectangle"); showToast("Rectangle Tool (R)", "info", 900); }
+        else if (k === "c") { setTool("circle"); showToast("Circle Tool (C)", "info", 900); }
+        else if (k === "l") { setTool("line"); showToast("Line Tool (L)", "info", 900); }
+        else if (k === "a") { setTool("arrow"); showToast("Arrow Tool (A)", "info", 900); }
+        else if (k === "t") { setTool("text"); showToast("Text Tool (T)", "info", 900); }
+        else if (k === "e") { setTool("eraser"); showToast("Eraser Tool (E)", "info", 900); }
+        else if (k === "?") { setIsShortcutsOpen((prev) => !prev); }
+        else if (k === "0") { handleResetZoom(); }
+        else if (k === "+" || k === "=") { handleZoomIn(); }
+        else if (k === "-") { handleZoomOut(); }
       }
     }
 
@@ -1281,16 +1623,80 @@ export default function Canvas() {
   };
 
   return (
-    <>
-      <RoomBar
+    <div className="relative w-screen h-screen overflow-hidden">
+      <TopBar
         roomId={roomId}
         setRoomId={setRoomId}
         onJoinRoom={handleJoinRoom}
         isConnected={isConnected}
         userCount={userCount}
         onGenerateRoom={handleGenerateRoom}
+        onUndo={undo}
+        onRedo={redo}
+        onExportPNG={handleExportPNG}
+        onExportSVG={handleExportSVG}
+        onExportJSON={handleExportJSON}
+        onImportJSON={handleImportJSON}
+        onClearCanvas={handleClearCanvas}
+        onOpenShortcuts={() => setIsShortcutsOpen(true)}
+        boardTitle={boardTitle}
+        setBoardTitle={setBoardTitle}
       />
-      <Header sentValu={sentValu} onUndo={undo} onRedo={redo} />
+
+      <Header
+        sentValu={sentValu}
+        onUndo={undo}
+        onRedo={redo}
+        activeTool={tool}
+        setActiveTool={setTool}
+        strokeColor={linecolor}
+        setStrokeColor={setLinecolor}
+        canvasBgColor={bgColor}
+        setCanvasBgColor={setBgcolor}
+      />
+
+      <ZoomControls
+        scale={viewScale}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onResetZoom={handleResetZoom}
+        onFitCenter={handleFitCenter}
+        gridMode={gridMode}
+        setGridMode={setGridMode}
+        bgColor={bgColor}
+        setBgColor={setBgcolor}
+      />
+
+      <ShortcutsModal
+        isOpen={isShortcutsOpen}
+        onClose={() => setIsShortcutsOpen(false)}
+      />
+
+      {/* Floating Selected Object Bar */}
+      {tool === "cursor" && selectedIndex.current >= 0 && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 rounded-2xl border border-white/10 bg-neutral-900/90 px-3 py-1.5 shadow-[0_12px_40px_rgba(0,0,0,0.7)] backdrop-blur-xl ring-1 ring-white/5 animate-popover text-xs">
+          <span className="text-[11px] font-medium text-neutral-400 border-r border-white/10 pr-2">
+            Selected
+          </span>
+          <button
+            onClick={duplicateSelected}
+            className="flex items-center gap-1 rounded-xl px-2.5 py-1 text-neutral-300 hover:bg-white/10 hover:text-white transition"
+            title="Duplicate (Ctrl+D)"
+          >
+            <FiCopy size={13} className="text-blue-400" />
+            <span>Duplicate</span>
+          </button>
+          <button
+            onClick={deleteSelected}
+            className="flex items-center gap-1 rounded-xl px-2.5 py-1 text-rose-400 hover:bg-rose-500/10 transition"
+            title="Delete (Del / Backspace)"
+          >
+            <FiTrash2 size={13} />
+            <span>Delete</span>
+          </button>
+        </div>
+      )}
+
       <canvas
         ref={canvasRef}
         style={{
@@ -1298,7 +1704,7 @@ export default function Canvas() {
           height: "100vh",
           display: "block",
           touchAction: "none",
-          background: "#a5a5a5",
+          background: bgColor,
           cursor: cursorStyle,
         }}
       />
